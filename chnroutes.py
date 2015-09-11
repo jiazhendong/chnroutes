@@ -199,34 +199,47 @@ def fetch_ip_data():
     
     cnregex=re.compile(r'apnic\|cn\|ipv4\|[0-9\.]+\|[0-9]+\|[0-9]+\|a.*',re.IGNORECASE)
     cndata=cnregex.findall(data)
-    
+
+    orig_ip_ranges = []
+    for item in cndata:
+        unit_items = item.split('|')
+        starting_ip = unit_items[3]
+        num_ip = int(unit_items[4])
+        digits = [int(i) for i in starting_ip.split('.')]
+        starting_ip_idx = digits[0]<<24 | digits[1]<<16 | digits[2]<<8 | digits[3]
+        orig_ip_ranges.append((starting_ip_idx, starting_ip_idx + num_ip))
+    orig_ip_ranges.sort()
+
+    merged_ip_ranges = []
+    start, end = orig_ip_ranges[0]
+    for item in orig_ip_ranges:
+        if item[0] <= end:
+            end = max(end, item[1])
+        else:
+            merged_ip_ranges.append((start, end))
+            start, end = item
+    merged_ip_ranges.append((start, end))
+
     results=[]
 
-    for item in cndata:
-        unit_items=item.split('|')
-        starting_ip=unit_items[3]
-        num_ip=int(unit_items[4])
-        
-        imask=0xffffffff^(num_ip-1)
-        #convert to string
-        imask=hex(imask)[2:]
-        mask=[0]*4
-        mask[0]=imask[0:2]
-        mask[1]=imask[2:4]
-        mask[2]=imask[4:6]
-        mask[3]=imask[6:8]
-        
-        #convert str to int
-        mask=[ int(i,16 ) for i in mask]
-        mask="%d.%d.%d.%d"%tuple(mask)
-        
-        #mask in *nix format
-        mask2=32-int(math.log(num_ip,2))
-        
-        results.append((starting_ip,mask,mask2))
-         
+    for item in merged_ip_ranges:
+        start, end = item
+        while start < end:
+            mask = 1
+            count = 1 << 31
+            while end - start < count or start % count != 0:
+                mask += 1
+                count >>= 1
+            results.append((format_ip(start),
+                            format_ip((-1 << (32 - mask)) & 0xffffffff),
+                            mask))
+            start += count
     return results
 
+def format_ip(ip_idx):
+    ip_hex = '%08x' % ip_idx
+    ip_part = [int(ip_hex[i*2:(i+1)*2], 16) for i in range(4)]
+    return '.'.join(str(i) for i in ip_part)
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description="Generate routing rules for vpn.")
